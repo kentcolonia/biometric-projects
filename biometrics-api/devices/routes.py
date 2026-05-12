@@ -58,7 +58,7 @@ def create_device():
         timeout=10,
         password=0,
         force_udp=False,
-        ommit_ping=False
+        ommit_ping=True
     )
 
     try:
@@ -102,7 +102,7 @@ def get_all_devices():
             timeout=10,
             password=0,
             force_udp=False,
-            ommit_ping=False
+            ommit_ping=True
         )
 
         device_info = {
@@ -197,7 +197,7 @@ def get_device(device_id):
         timeout=10,
         password=0,
         force_udp=False,
-        ommit_ping=False
+        ommit_ping=True
     )
 
     device_info = {
@@ -297,7 +297,7 @@ def update_device(device_id):
         timeout=10,
         password=0,
         force_udp=False,
-        ommit_ping=False
+        ommit_ping=True
     )
 
     try:

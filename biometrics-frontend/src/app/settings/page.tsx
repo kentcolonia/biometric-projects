@@ -1,304 +1,440 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { fetchWithAuth } from '@/lib/api';
 
-interface Company { id: number; name: string; }
-interface Department { id: number; name: string; company_id: number; }
-interface Employee { id: number; name: string; user_id: string; }
-interface DayRecord {
-  date: string; employee_name: string; user_id: string; department: string; company: string;
-  shift: string; shift_time_in: string; shift_time_out: string;
-  shift_break_start: string | null; shift_break_end: string | null;
-  first_in: string | null; last_out: string | null;
-  is_absent: boolean; is_late: boolean; late_minutes: number;
-  is_undertime: boolean; undertime_minutes: number;
-  is_overtime: boolean; overtime_minutes: number; hours_worked: number;
-}
-interface EmpReport {
-  employee: any;
-  records: DayRecord[];
-  summary: {
-    total_days: number; present: number; absent: number;
-    late: number; late_minutes: number;
-    undertime: number; undertime_minutes: number;
-    overtime: number; overtime_minutes: number; total_hours: number;
-  };
+interface Company { id: number; name: string; address: string; }
+interface Department { id: number; name: string; company_id: number; company_name: string; }
+interface Shift {
+  id: number; name: string; time_in: string; time_out: string;
+  break_start: string | null; break_end: string | null; has_break: boolean;
+  saturday_time_out: string | null;
+  grace_period: number; is_night_shift: boolean; company_id: number;
 }
 
-function fmtMins(mins: number) {
-  if (!mins) return '—';
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
+type Tab = 'companies' | 'departments' | 'shifts';
 
-function shiftLabel(r: DayRecord) {
-  if (!r.shift_time_in) return r.shift || 'No shift';
-  if (r.shift_break_start && r.shift_break_end) {
-    return `${r.shift_time_in}–${r.shift_break_start} / ${r.shift_break_end}–${r.shift_time_out}`;
-  }
-  return `${r.shift_time_in}–${r.shift_time_out}`;
-}
-
-function today() { return new Date().toISOString().split('T')[0]; }
-function monthStart() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; }
-
-export default function ReportsPage() {
+export default function SettingsPage() {
+  const [tab, setTab] = useState<Tab>('companies');
   const [companies, setCompanies] = useState<Company[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [report, setReport] = useState<EmpReport[]>([]);
-  const [summary, setSummary] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [generated, setGenerated] = useState(false);
+  const [shifts, setShifts] = useState<Shift[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const [dateFrom, setDateFrom] = useState(monthStart());
-  const [dateTo, setDateTo] = useState(today());
-  const [period, setPeriod] = useState('monthly');
-  const [companyId, setCompanyId] = useState('');
-  const [deptId, setDeptId] = useState('');
-  const [employeeId, setEmployeeId] = useState('');
-  const [expandedEmp, setExpandedEmp] = useState<number | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const [modalType, setModalType] = useState<Tab>('companies');
+  const [editItem, setEditItem] = useState<any>(null);
+  const [form, setForm] = useState<any>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  useEffect(() => {
-    Promise.all([
-      fetchWithAuth<any>('/companies'),
-      fetchWithAuth<any>('/departments'),
-      fetchWithAuth<any>('/employees'),
-    ]).then(([c, d, e]) => {
+  useEffect(() => { loadAll(); }, []);
+
+  async function loadAll() {
+    setLoading(true);
+    try {
+      const [c, d, s] = await Promise.all([
+        fetchWithAuth<any>('/companies'),
+        fetchWithAuth<any>('/departments'),
+        fetchWithAuth<any>('/shifts'),
+      ]);
       setCompanies(c?.data || []);
       setDepartments(d?.data || []);
-      setEmployees(e?.data || []);
-    }).catch(console.error);
-  }, []);
-
-  async function generateReport() {
-    if (!dateFrom || !dateTo) return;
-    setLoading(true); setGenerated(false);
-    try {
-      const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo, period });
-      if (companyId) params.set('company_id', companyId);
-      if (deptId) params.set('department_id', deptId);
-      if (employeeId) params.set('employee_id', employeeId);
-      const data = await fetchWithAuth<any>(`/reports/attendance?${params}`);
-      setReport(data?.data || []);
-      setSummary(data?.overall_summary || null);
-      setGenerated(true);
-      setExpandedEmp(null);
+      setShifts(s?.data || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }
 
-  function exportCSV() {
-    const rows: string[][] = [[
-      'Employee', 'User ID', 'Department', 'Company', 'Shift', 'Schedule',
-      'Date', 'Time In', 'Time Out', 'Hours Worked',
-      'Absent', 'Late', 'Late Duration',
-      'Undertime', 'UT Duration', 'Overtime', 'OT Duration'
-    ]];
-    report.forEach(emp => {
-      emp.records.forEach(r => {
-        rows.push([
-          emp.employee.name, emp.employee.user_id,
-          r.department || '', r.company || '',
-          r.shift || '', shiftLabel(r),
-          r.date, r.first_in || '', r.last_out || '',
-          String(r.hours_worked),
-          r.is_absent ? 'Yes' : 'No',
-          r.is_late ? 'Yes' : 'No', fmtMins(r.late_minutes),
-          r.is_undertime ? 'Yes' : 'No', fmtMins(r.undertime_minutes),
-          r.is_overtime ? 'Yes' : 'No', fmtMins(r.overtime_minutes),
-        ]);
-      });
-    });
-    const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url;
-    a.download = `attendance-report-${dateFrom}-${dateTo}.csv`; a.click();
-    URL.revokeObjectURL(url);
+  function openAdd(type: Tab) {
+    setModalType(type);
+    setEditItem(null);
+    setForm(type === 'shifts' ? {
+      grace_period: '15', is_night_shift: false, has_break: false,
+      saturday_mode: 'none', // 'none' | 'halfday'
+    } : {});
+    setError('');
+    setShowModal(true);
   }
 
-  const filteredDepts = departments.filter(d => !companyId || d.company_id === Number(companyId));
-  const filteredEmps = employees.filter(e => {
-    const emp = e as any;
-    if (companyId && emp.company_id !== Number(companyId)) return false;
-    if (deptId && emp.department_id !== Number(deptId)) return false;
-    return true;
-  });
-
-  // Get shift label for employee header from first non-absent record
-  function empShiftLabel(emp: EmpReport) {
-    const r = emp.records.find(r => r.shift_time_in);
-    if (!r) return emp.employee.shift_name || 'No shift';
-    if (r.shift_break_start && r.shift_break_end) {
-      return `${r.shift || 'Shift'} · ${r.shift_time_in}–${r.shift_break_start} / ${r.shift_break_end}–${r.shift_time_out}`;
+  function openEdit(type: Tab, item: any) {
+    setModalType(type);
+    setEditItem(item);
+    if (type === 'shifts') {
+      setForm({
+        name: item.name,
+        time_in: item.time_in,
+        time_out: item.time_out,
+        break_start: item.break_start || '',
+        break_end: item.break_end || '',
+        has_break: item.has_break || false,
+        saturday_mode: item.saturday_time_out ? 'halfday' : 'none',
+        saturday_time_out: item.saturday_time_out || '',
+        grace_period: String(item.grace_period),
+        is_night_shift: item.is_night_shift,
+        company_id: String(item.company_id || ''),
+      });
+    } else if (type === 'departments') {
+      setForm({ name: item.name, company_id: String(item.company_id) });
+    } else {
+      setForm({ name: item.name, address: item.address || '' });
     }
-    return `${r.shift || 'Shift'} · ${r.shift_time_in}–${r.shift_time_out}`;
+    setError('');
+    setShowModal(true);
+  }
+
+  function closeModal() { setShowModal(false); setEditItem(null); setError(''); }
+
+  async function handleSave() {
+    setSaving(true); setError('');
+    try {
+      let body: any = {};
+      if (modalType === 'companies') {
+        if (!form.name) return setError('Name is required');
+        body = { name: form.name, address: form.address || '' };
+      } else if (modalType === 'departments') {
+        if (!form.name) return setError('Name is required');
+        if (!form.company_id) return setError('Company is required');
+        body = { name: form.name, company_id: Number(form.company_id) };
+      } else {
+        if (!form.name) return setError('Name is required');
+        if (!form.time_in) return setError('Time In is required');
+        if (!form.time_out) return setError('Time Out is required');
+        if (form.has_break && (!form.break_start || !form.break_end))
+          return setError('Both Break Start and Break End are required for split shifts');
+        if (form.saturday_mode === 'halfday' && !form.saturday_time_out)
+          return setError('Saturday end time is required for half-day Saturday');
+        body = {
+          name: form.name,
+          time_in: form.time_in,
+          time_out: form.time_out,
+          break_start: form.has_break ? form.break_start : '',
+          break_end: form.has_break ? form.break_end : '',
+          has_break: form.has_break,
+          saturday_time_out: form.saturday_mode === 'halfday' ? form.saturday_time_out : '',
+          grace_period: Number(form.grace_period || 15),
+          is_night_shift: form.is_night_shift,
+          company_id: form.company_id ? Number(form.company_id) : null,
+        };
+      }
+      const url = `/${modalType}${editItem ? `/${editItem.id}` : ''}`;
+      await fetchWithAuth(url, { method: editItem ? 'PUT' : 'POST', body: JSON.stringify(body) });
+      await loadAll();
+      closeModal();
+    } catch (e: any) { setError(e.message || 'Failed to save'); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDelete(type: Tab, id: number) {
+    if (!confirm('Delete this item?')) return;
+    setDeletingId(id);
+    try {
+      await fetchWithAuth(`/${type}/${id}`, { method: 'DELETE' });
+      await loadAll();
+    } catch (e) { console.error(e); }
+    finally { setDeletingId(null); }
   }
 
   return (
     <div className="page">
       <div className="topbar">
-        <div><h1 className="page-title">Attendance Reports</h1><p className="page-sub">Late, Absent, Overtime, Undertime per employee</p></div>
-        {generated && <button className="btn-export" onClick={exportCSV}>↓ Export CSV</button>}
+        <div><h1 className="page-title">Settings</h1><p className="page-sub">Manage companies, departments, and shift schedules</p></div>
       </div>
 
-      {/* Filter panel */}
-      <div className="filter-card">
-        <div className="filter-grid">
-          <div className="filter-group">
-            <label className="filter-label">Period</label>
-            <select className="filter-input" value={period} onChange={e => setPeriod(e.target.value)}>
-              <option value="daily">Daily</option>
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-          </div>
-          <div className="filter-group">
-            <label className="filter-label">Date From</label>
-            <input className="filter-input" type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-          </div>
-          <div className="filter-group">
-            <label className="filter-label">Date To</label>
-            <input className="filter-input" type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} />
-          </div>
-          <div className="filter-group">
-            <label className="filter-label">Company</label>
-            <select className="filter-input" value={companyId} onChange={e => { setCompanyId(e.target.value); setDeptId(''); setEmployeeId(''); }}>
-              <option value="">All companies</option>
-              {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
-          <div className="filter-group">
-            <label className="filter-label">Department</label>
-            <select className="filter-input" value={deptId} onChange={e => { setDeptId(e.target.value); setEmployeeId(''); }}>
-              <option value="">All departments</option>
-              {filteredDepts.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-          </div>
-          <div className="filter-group">
-            <label className="filter-label">Employee</label>
-            <select className="filter-input" value={employeeId} onChange={e => setEmployeeId(e.target.value)}>
-              <option value="">All employees</option>
-              {filteredEmps.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
-          </div>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-          <button className="btn-generate" onClick={generateReport} disabled={loading}>
-            {loading ? 'Generating...' : '▶ Generate Report'}
+      <div className="tabs">
+        {(['companies', 'departments', 'shifts'] as Tab[]).map(t => (
+          <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+            {t === 'companies' ? '🏢 Companies' : t === 'departments' ? '🗂 Departments' : '🕐 Shifts'}
           </button>
-        </div>
+        ))}
       </div>
 
-      {/* Overall summary */}
-      {generated && summary && (
-        <div className="summary-cards">
-          <div className="summary-card"><div className="summary-val">{summary.total_employees}</div><div className="summary-label">Employees</div></div>
-          <div className="summary-card absent"><div className="summary-val">{summary.total_absent}</div><div className="summary-label">Absent Days</div></div>
-          <div className="summary-card late"><div className="summary-val">{summary.total_late}</div><div className="summary-label">Late Days</div></div>
-          <div className="summary-card undertime"><div className="summary-val">{summary.total_undertime}</div><div className="summary-label">Undertime Days</div></div>
-          <div className="summary-card overtime"><div className="summary-val">{summary.total_overtime}</div><div className="summary-label">Overtime Days</div></div>
-        </div>
-      )}
-
-      {generated && report.length === 0 && (
-        <div className="card"><div className="empty"><div className="empty-icon">📋</div><div>No data found for this period</div></div></div>
-      )}
-
-      {generated && report.map((emp, i) => (
-        <div key={emp.employee.id} className="emp-card">
-          <div className="emp-header" onClick={() => setExpandedEmp(expandedEmp === i ? null : i)}>
-            <div className="emp-info">
-              <div className="avatar">{emp.employee.name.charAt(0).toUpperCase()}</div>
-              <div>
-                <div className="emp-name">{emp.employee.name}</div>
-                <div className="emp-sub">
-                  {emp.employee.department_name || 'No department'}
-                  {' · '}
-                  <span className="shift-pill">
-                    🕐 {empShiftLabel(emp)}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div className="emp-stats">
-              <div className="stat"><span className="stat-val">{emp.summary.present}</span><span className="stat-label">Present</span></div>
-              <div className="stat absent"><span className="stat-val">{emp.summary.absent}</span><span className="stat-label">Absent</span></div>
-              <div className="stat late"><span className="stat-val">{emp.summary.late}</span><span className="stat-label">Late</span></div>
-              <div className="stat undertime"><span className="stat-val">{emp.summary.undertime}</span><span className="stat-label">Undertime</span></div>
-              <div className="stat overtime"><span className="stat-val">{emp.summary.overtime}</span><span className="stat-label">Overtime</span></div>
-              <div className="stat"><span className="stat-val">{emp.summary.total_hours}h</span><span className="stat-label">Total Hrs</span></div>
-            </div>
-            <button className="expand-btn">{expandedEmp === i ? '▲' : '▼'}</button>
+      {/* COMPANIES */}
+      {tab === 'companies' && (
+        <div>
+          <div className="section-header">
+            <span>{companies.length} companies</span>
+            <button className="btn-primary" onClick={() => openAdd('companies')}>+ Add Company</button>
           </div>
-
-          {expandedEmp === i && (
-            <div className="emp-detail">
+          <div className="card">
+            {loading ? <div className="empty">Loading...</div> : companies.length === 0 ? (
+              <div className="empty"><div className="empty-icon">🏢</div><div>No companies yet</div><button className="btn-primary" style={{marginTop:12}} onClick={() => openAdd('companies')}>Add Company</button></div>
+            ) : (
               <table className="table">
-                <thead>
-                  <tr>
-                    <th>Date</th>
-                    <th>Schedule</th>
-                    <th>Time In</th>
-                    <th>Time Out</th>
-                    <th>Hours</th>
-                    <th>Late</th>
-                    <th>Undertime</th>
-                    <th>Overtime</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
+                <thead><tr><th>Name</th><th>Address</th><th>Departments</th><th>Actions</th></tr></thead>
                 <tbody>
-                  {emp.records.map(r => (
-                    <tr key={r.date} className={r.is_absent ? 'row-absent' : ''}>
-                      <td>{new Date(r.date + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' })}</td>
-                      <td>
-                        {r.shift_time_in ? (
-                          r.shift_break_start && r.shift_break_end ? (
-                            <span className="schedule-split">
-                              <span className="mono">{r.shift_time_in}–{r.shift_break_start}</span>
-                              <span className="break-chip">brk</span>
-                              <span className="mono">{r.shift_break_end}–{r.shift_time_out}</span>
-                            </span>
-                          ) : (
-                            <span className="mono">{r.shift_time_in}–{r.shift_time_out}</span>
-                          )
-                        ) : <span className="muted">—</span>}
-                      </td>
-                      <td><span className="mono">{r.first_in || <span className="muted">—</span>}</span></td>
-                      <td><span className="mono">{r.last_out || <span className="muted">—</span>}</span></td>
-                      <td>{r.hours_worked > 0 ? `${r.hours_worked}h` : <span className="muted">—</span>}</td>
-                      <td>{r.is_late ? <span className="flag-late">{fmtMins(r.late_minutes)}</span> : <span className="muted">—</span>}</td>
-                      <td>{r.is_undertime ? <span className="flag-ut">{fmtMins(r.undertime_minutes)}</span> : <span className="muted">—</span>}</td>
-                      <td>{r.is_overtime ? <span className="flag-ot">{fmtMins(r.overtime_minutes)}</span> : <span className="muted">—</span>}</td>
-                      <td>
-                        {r.is_absent ? <span className="badge absent">Absent</span>
-                          : r.is_late ? <span className="badge late">Late</span>
-                          : <span className="badge present">Present</span>}
-                      </td>
+                  {companies.map(c => (
+                    <tr key={c.id}>
+                      <td><strong>{c.name}</strong></td>
+                      <td>{c.address || <span className="muted">—</span>}</td>
+                      <td><span className="count-badge">{departments.filter(d => d.company_id === c.id).length}</span></td>
+                      <td><div className="actions">
+                        <button className="btn-icon" onClick={() => openEdit('companies', c)}>✎</button>
+                        <button className="btn-icon danger" onClick={() => handleDelete('companies', c.id)} disabled={deletingId === c.id}>{deletingId === c.id ? '...' : '✕'}</button>
+                      </div></td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-
-              {/* Per-employee summary footer */}
-              <div className="emp-footer">
-                <span>Total present: <strong>{emp.summary.present}</strong></span>
-                <span>Total hours: <strong>{emp.summary.total_hours}h</strong></span>
-                <span>Late time: <strong className="flag-late">{fmtMins(emp.summary.late_minutes)}</strong></span>
-                <span>Undertime: <strong className="flag-ut">{fmtMins(emp.summary.undertime_minutes)}</strong></span>
-                <span>Overtime: <strong className="flag-ot">{fmtMins(emp.summary.overtime_minutes)}</strong></span>
-              </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      ))}
+      )}
 
-      {!generated && !loading && (
-        <div className="card">
-          <div className="empty"><div className="empty-icon">📋</div><div>Set filters and click Generate Report</div></div>
+      {/* DEPARTMENTS */}
+      {tab === 'departments' && (
+        <div>
+          <div className="section-header">
+            <span>{departments.length} departments</span>
+            <button className="btn-primary" onClick={() => openAdd('departments')}>+ Add Department</button>
+          </div>
+          <div className="card">
+            {loading ? <div className="empty">Loading...</div> : departments.length === 0 ? (
+              <div className="empty"><div className="empty-icon">🗂</div><div>No departments yet</div></div>
+            ) : (
+              <table className="table">
+                <thead><tr><th>Name</th><th>Company</th><th>Actions</th></tr></thead>
+                <tbody>
+                  {departments.map(d => (
+                    <tr key={d.id}>
+                      <td><strong>{d.name}</strong></td>
+                      <td>{d.company_name}</td>
+                      <td><div className="actions">
+                        <button className="btn-icon" onClick={() => openEdit('departments', d)}>✎</button>
+                        <button className="btn-icon danger" onClick={() => handleDelete('departments', d.id)} disabled={deletingId === d.id}>{deletingId === d.id ? '...' : '✕'}</button>
+                      </div></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SHIFTS */}
+      {tab === 'shifts' && (
+        <div>
+          <div className="section-header">
+            <span>{shifts.length} shifts</span>
+            <button className="btn-primary" onClick={() => openAdd('shifts')}>+ Add Shift</button>
+          </div>
+          <div className="card">
+            {loading ? <div className="empty">Loading...</div> : shifts.length === 0 ? (
+              <div className="empty"><div className="empty-icon">🕐</div><div>No shifts yet</div></div>
+            ) : (
+              <table className="table">
+                <thead><tr><th>Name</th><th>Schedule</th><th>Saturday</th><th>Grace</th><th>Type</th><th>Actions</th></tr></thead>
+                <tbody>
+                  {shifts.map(s => (
+                    <tr key={s.id}>
+                      <td><strong>{s.name}</strong></td>
+                      <td>
+                        <div className="schedule-cell">
+                          {s.has_break && s.break_start && s.break_end ? (
+                            <>
+                              <span className="time-badge">{s.time_in}</span>
+                              <span className="schedule-sep">to</span>
+                              <span className="time-badge">{s.break_start}</span>
+                              <span className="break-chip">break</span>
+                              <span className="time-badge">{s.break_end}</span>
+                              <span className="schedule-sep">to</span>
+                              <span className="time-badge">{s.time_out}</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="time-badge">{s.time_in}</span>
+                              <span className="schedule-sep">–</span>
+                              <span className="time-badge">{s.time_out}</span>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        {s.saturday_time_out
+                          ? <span className="sat-badge">½ day until {s.saturday_time_out}</span>
+                          : <span className="muted">—</span>}
+                      </td>
+                      <td>{s.grace_period} min</td>
+                      <td><span className={`shift-type ${s.is_night_shift ? 'night' : 'day'}`}>{s.is_night_shift ? '🌙 Night' : '☀️ Day'}</span></td>
+                      <td><div className="actions">
+                        <button className="btn-icon" onClick={() => openEdit('shifts', s)}>✎</button>
+                        <button className="btn-icon danger" onClick={() => handleDelete('shifts', s.id)} disabled={deletingId === s.id}>{deletingId === s.id ? '...' : '✕'}</button>
+                      </div></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL */}
+      {showModal && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">{editItem ? 'Edit' : 'Add'} {modalType === 'companies' ? 'Company' : modalType === 'departments' ? 'Department' : 'Shift'}</h2>
+              <button className="modal-close" onClick={closeModal}>✕</button>
+            </div>
+            {error && <div className="error-box">{error}</div>}
+
+            <div className="form-group">
+              <label className="form-label">Name *</label>
+              <input className="form-input" value={form.name || ''} onChange={e => setForm((f: any) => ({ ...f, name: e.target.value }))} />
+            </div>
+
+            {modalType === 'companies' && (
+              <div className="form-group">
+                <label className="form-label">Address</label>
+                <input className="form-input" value={form.address || ''} onChange={e => setForm((f: any) => ({ ...f, address: e.target.value }))} />
+              </div>
+            )}
+
+            {modalType === 'departments' && (
+              <div className="form-group">
+                <label className="form-label">Company *</label>
+                <select className="form-input" value={form.company_id || ''} onChange={e => setForm((f: any) => ({ ...f, company_id: e.target.value }))}>
+                  <option value="">Select company</option>
+                  {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            )}
+
+            {modalType === 'shifts' && (<>
+              <div className="form-group">
+                <label className="form-label">Company</label>
+                <select className="form-input" value={form.company_id || ''} onChange={e => setForm((f: any) => ({ ...f, company_id: e.target.value }))}>
+                  <option value="">All companies</option>
+                  {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+
+              {/* Weekday schedule type */}
+              <div className="form-group">
+                <label className="form-label">Weekday Schedule</label>
+                <div className="toggle-group">
+                  <button type="button" className={`toggle-btn ${!form.has_break ? 'active' : ''}`}
+                    onClick={() => setForm((f: any) => ({ ...f, has_break: false, break_start: '', break_end: '' }))}>
+                    ⏱ Full Day
+                  </button>
+                  <button type="button" className={`toggle-btn ${form.has_break ? 'active' : ''}`}
+                    onClick={() => setForm((f: any) => ({ ...f, has_break: true }))}>
+                    ✂️ Split Shift
+                  </button>
+                </div>
+              </div>
+
+              {/* Full day */}
+              {!form.has_break && (
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">Time In *</label>
+                    <input className="form-input" type="time" value={form.time_in || ''} onChange={e => setForm((f: any) => ({ ...f, time_in: e.target.value }))} />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Time Out *</label>
+                    <input className="form-input" type="time" value={form.time_out || ''} onChange={e => setForm((f: any) => ({ ...f, time_out: e.target.value }))} />
+                  </div>
+                </div>
+              )}
+
+              {/* Split shift */}
+              {form.has_break && (<>
+                <div className="split-section">
+                  <div className="split-label">🌅 AM Session</div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">Start *</label>
+                      <input className="form-input" type="time" value={form.time_in || ''} onChange={e => setForm((f: any) => ({ ...f, time_in: e.target.value }))} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Break Start *</label>
+                      <input className="form-input" type="time" value={form.break_start || ''} onChange={e => setForm((f: any) => ({ ...f, break_start: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+                <div className="split-section">
+                  <div className="split-label">🌇 PM Session</div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">Break End *</label>
+                      <input className="form-input" type="time" value={form.break_end || ''} onChange={e => setForm((f: any) => ({ ...f, break_end: e.target.value }))} />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">End *</label>
+                      <input className="form-input" type="time" value={form.time_out || ''} onChange={e => setForm((f: any) => ({ ...f, time_out: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+                {form.time_in && form.break_start && form.break_end && form.time_out && (
+                  <div className="schedule-preview">
+                    📅 <strong>{form.time_in}–{form.break_start}</strong> break <strong>{form.break_end}–{form.time_out}</strong>
+                  </div>
+                )}
+              </>)}
+
+              {/* Saturday */}
+              <div className="form-group saturday-group">
+                <label className="form-label">Saturday</label>
+                <div className="toggle-group">
+                  <button type="button" className={`toggle-btn ${form.saturday_mode === 'none' ? 'active' : ''}`}
+                    onClick={() => setForm((f: any) => ({ ...f, saturday_mode: 'none', saturday_time_out: '' }))}>
+                    🚫 No Work
+                  </button>
+                  <button type="button" className={`toggle-btn ${form.saturday_mode === 'halfday' ? 'active sat-active' : ''}`}
+                    onClick={() => setForm((f: any) => ({ ...f, saturday_mode: 'halfday' }))}>
+                    🌤 Half Day
+                  </button>
+                  <button type="button" className={`toggle-btn ${form.saturday_mode === 'fullday' ? 'active' : ''}`}
+                    onClick={() => setForm((f: any) => ({ ...f, saturday_mode: 'fullday', saturday_time_out: form.time_out || '' }))}>
+                    ☀️ Full Day
+                  </button>
+                </div>
+                {form.saturday_mode === 'halfday' && (
+                  <div style={{ marginTop: 10 }}>
+                    <label className="form-label">Saturday End Time *</label>
+                    <input
+                      className="form-input sat-input"
+                      type="time"
+                      value={form.saturday_time_out || ''}
+                      onChange={e => setForm((f: any) => ({ ...f, saturday_time_out: e.target.value }))}
+                      placeholder="e.g. 12:00"
+                    />
+                    {form.time_in && form.saturday_time_out && (
+                      <div className="schedule-preview sat-preview">
+                        🌤 Saturday: <strong>{form.time_in} – {form.saturday_time_out}</strong> (half day)
+                      </div>
+                    )}
+                  </div>
+                )}
+                {form.saturday_mode === 'fullday' && (
+                  <div className="schedule-preview" style={{ marginTop: 10 }}>
+                    ☀️ Saturday same as weekday: <strong>{form.time_in || '?'} – {form.time_out || '?'}</strong>
+                  </div>
+                )}
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Grace Period (min)</label>
+                  <input className="form-input" type="number" min="0" value={form.grace_period || '15'} onChange={e => setForm((f: any) => ({ ...f, grace_period: e.target.value }))} />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Shift Type</label>
+                  <select className="form-input" value={String(form.is_night_shift)} onChange={e => setForm((f: any) => ({ ...f, is_night_shift: e.target.value === 'true' }))}>
+                    <option value="false">☀️ Day Shift</option>
+                    <option value="true">🌙 Night Shift</option>
+                  </select>
+                </div>
+              </div>
+            </>)}
+
+            <div className="modal-footer">
+              <button className="btn-secondary" onClick={closeModal}>Cancel</button>
+              <button className="btn-primary" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : editItem ? 'Save Changes' : 'Create'}</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -307,64 +443,57 @@ export default function ReportsPage() {
         .topbar{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}
         .page-title{font-size:22px;font-weight:600;color:#111;letter-spacing:-.4px}
         .page-sub{font-size:13px;color:#999;margin-top:3px}
-        .btn-export{padding:9px 16px;background:#fff;color:#333;border:1px solid #e8e8e6;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit}
-        .btn-export:hover{background:#f5f5f3}
-        .filter-card{background:#fff;border:1px solid #e8e8e6;border-radius:12px;padding:20px;margin-bottom:20px}
-        .filter-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
-        .filter-group{display:flex;flex-direction:column;gap:5px}
-        .filter-label{font-size:11px;font-weight:500;color:#888;text-transform:uppercase;letter-spacing:.4px}
-        .filter-input{padding:8px 10px;border:1px solid #e0e0de;border-radius:8px;font-size:13px;color:#111;background:#fafafa;outline:none;font-family:inherit;width:100%;box-sizing:border-box}
-        .filter-input:focus{border-color:#aaa;background:#fff}
-        .btn-generate{padding:10px 24px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit}
-        .btn-generate:hover{opacity:.85}
-        .btn-generate:disabled{opacity:.5;cursor:not-allowed}
-        .summary-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-bottom:20px}
-        .summary-card{background:#fff;border:1px solid #e8e8e6;border-radius:12px;padding:16px 20px}
-        .summary-card.absent{border-color:#fecaca;background:#fef2f2}
-        .summary-card.late{border-color:#fde68a;background:#fefce8}
-        .summary-card.undertime{border-color:#fed7aa;background:#fff7ed}
-        .summary-card.overtime{border-color:#bbf7d0;background:#f0fdf4}
-        .summary-val{font-size:28px;font-weight:700;color:#111;line-height:1}
-        .summary-label{font-size:12px;color:#888;margin-top:4px}
-        .emp-card{background:#fff;border:1px solid #e8e8e6;border-radius:12px;margin-bottom:12px;overflow:hidden}
-        .emp-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;cursor:pointer;gap:16px;flex-wrap:wrap}
-        .emp-header:hover{background:#fafaf9}
-        .emp-info{display:flex;align-items:center;gap:12px;min-width:200px}
-        .avatar{width:36px;height:36px;border-radius:50%;background:#f0f0ee;color:#888;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;flex-shrink:0}
-        .emp-name{font-size:14px;font-weight:600;color:#111}
-        .emp-sub{font-size:12px;color:#aaa;margin-top:2px}
-        .shift-pill{color:#555;font-size:11px}
-        .emp-stats{display:flex;gap:20px;flex-wrap:wrap}
-        .stat{display:flex;flex-direction:column;align-items:center;gap:2px}
-        .stat-val{font-size:16px;font-weight:600;color:#111}
-        .stat-label{font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:.3px}
-        .stat.absent .stat-val{color:#dc2626}
-        .stat.late .stat-val{color:#ca8a04}
-        .stat.undertime .stat-val{color:#ea580c}
-        .stat.overtime .stat-val{color:#16a34a}
-        .expand-btn{background:none;border:none;font-size:12px;color:#aaa;cursor:pointer;padding:4px 8px}
-        .emp-detail{border-top:1px solid #f0f0ee}
-        .table{width:100%;border-collapse:collapse;font-size:13px}
-        .table th{text-align:left;padding:10px 20px;color:#aaa;font-weight:400;font-size:11px;text-transform:uppercase;letter-spacing:.5px;background:#fafaf9;border-bottom:1px solid #f0f0ee}
-        .table td{padding:11px 20px;color:#333;border-bottom:1px solid #f7f7f5;vertical-align:middle}
-        .table tr:last-child td{border-bottom:none}
-        .row-absent td{background:#fef9f9}
-        .mono{font-family:monospace;font-size:12px}
-        .muted{color:#ccc}
-        .schedule-split{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
-        .break-chip{font-size:10px;background:#fef9c3;color:#a16207;border-radius:999px;padding:1px 6px;font-weight:500}
-        .flag-late{color:#ca8a04;font-size:12px;font-weight:500}
-        .flag-ut{color:#ea580c;font-size:12px;font-weight:500}
-        .flag-ot{color:#16a34a;font-size:12px;font-weight:500}
-        .badge{display:inline-flex;font-size:11px;padding:2px 8px;border-radius:999px;font-weight:500}
-        .badge.present{background:#f0fdf4;color:#16a34a}
-        .badge.absent{background:#fef2f2;color:#dc2626}
-        .badge.late{background:#fefce8;color:#ca8a04}
-        .emp-footer{display:flex;gap:24px;flex-wrap:wrap;padding:12px 20px;background:#fafaf9;border-top:1px solid #f0f0ee;font-size:12px;color:#888}
-        .emp-footer strong{color:#333}
+        .tabs{display:flex;gap:4px;margin-bottom:20px;background:#f5f5f3;padding:4px;border-radius:10px;width:fit-content}
+        .tab{padding:8px 18px;border-radius:7px;border:none;background:none;font-size:13px;cursor:pointer;font-family:inherit;color:#888;transition:all .15s}
+        .tab.active{background:#fff;color:#111;font-weight:500;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+        .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;font-size:13px;color:#888}
         .card{background:#fff;border:1px solid #e8e8e6;border-radius:12px;overflow:hidden}
+        .table{width:100%;border-collapse:collapse;font-size:13px}
+        .table th{text-align:left;padding:11px 20px;color:#aaa;font-weight:400;font-size:11px;text-transform:uppercase;letter-spacing:.5px;background:#fafaf9;border-bottom:1px solid #f0f0ee}
+        .table td{padding:13px 20px;color:#333;border-bottom:1px solid #f7f7f5;vertical-align:middle}
+        .table tr:last-child td{border-bottom:none}
+        .table tr:hover td{background:#fafaf9}
+        .muted{color:#ccc}
+        .count-badge{display:inline-flex;align-items:center;background:#f0f0ee;color:#888;font-size:11px;padding:2px 8px;border-radius:999px}
+        .schedule-cell{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+        .time-badge{font-family:monospace;font-size:13px;font-weight:600;color:#111;background:#f5f5f3;padding:2px 6px;border-radius:4px}
+        .schedule-sep{font-size:11px;color:#999}
+        .break-chip{font-size:10px;background:#fef9c3;color:#a16207;border-radius:999px;padding:2px 7px;font-weight:500}
+        .sat-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;background:#fef3c7;color:#b45309;border-radius:999px;padding:3px 9px;font-weight:500}
+        .shift-type{font-size:12px}
+        .actions{display:flex;gap:6px}
+        .btn-icon{width:30px;height:30px;border-radius:6px;border:1px solid #e8e8e6;background:#fff;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;color:#666;transition:all .15s}
+        .btn-icon:hover{background:#f5f5f3;color:#111}
+        .btn-icon.danger:hover{background:#fef2f2;border-color:#fecaca;color:#dc2626}
+        .btn-icon:disabled{opacity:.5;cursor:not-allowed}
+        .btn-primary{padding:9px 16px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;transition:opacity .15s}
+        .btn-primary:disabled{opacity:.5;cursor:not-allowed}
+        .btn-secondary{padding:9px 16px;background:#fff;color:#333;border:1px solid #e8e8e6;border-radius:8px;font-size:13px;cursor:pointer;font-family:inherit}
         .empty{padding:60px 20px;text-align:center;color:#bbb;font-size:13px}
         .empty-icon{font-size:32px;margin-bottom:12px}
+        .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+        .modal{background:#fff;border-radius:14px;width:100%;max-width:480px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.15);max-height:90vh;overflow-y:auto}
+        .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+        .modal-title{font-size:16px;font-weight:600;color:#111}
+        .modal-close{background:none;border:none;font-size:16px;color:#aaa;cursor:pointer}
+        .modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}
+        .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+        .form-group{margin-bottom:16px}
+        .form-label{display:block;font-size:12px;font-weight:500;color:#555;margin-bottom:6px}
+        .form-input{width:100%;padding:9px 12px;border:1px solid #e0e0de;border-radius:8px;font-size:13px;color:#111;background:#fafafa;outline:none;box-sizing:border-box;font-family:inherit}
+        .form-input:focus{border-color:#aaa;background:#fff}
+        .error-box{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:16px}
+        .toggle-group{display:flex;gap:6px}
+        .toggle-btn{flex:1;padding:9px 12px;border-radius:8px;border:1px solid #e0e0de;background:#fafafa;font-size:12px;cursor:pointer;font-family:inherit;color:#666;transition:all .15s;text-align:center}
+        .toggle-btn:hover{background:#f5f5f3;border-color:#ccc}
+        .toggle-btn.active{background:#111;color:#fff;border-color:#111}
+        .toggle-btn.sat-active{background:#d97706;border-color:#d97706}
+        .split-section{background:#f9f9f7;border:1px solid #eeeeec;border-radius:10px;padding:14px 14px 2px;margin-bottom:12px}
+        .split-label{font-size:11px;font-weight:600;color:#888;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
+        .saturday-group{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:14px;margin-bottom:4px}
+        .sat-input{border-color:#fcd34d !important}
+        .schedule-preview{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;font-size:13px;color:#15803d;margin-bottom:4px;margin-top:8px}
+        .sat-preview{background:#fffbeb;border-color:#fde68a;color:#92400e}
       `}</style>
     </div>
   );

@@ -32,6 +32,7 @@ export default function UsersPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const [assignDeviceId, setAssignDeviceId] = useState<number | ''>('');
+  const [openMenuUid, setOpenMenuUid] = useState<number | null>(null);
 
   // Bulk selection state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -55,6 +56,13 @@ export default function UsersPage() {
   }, []);
 
   useEffect(() => { if (selectedDevice) fetchUsers(selectedDevice); }, [selectedDevice]);
+
+  useEffect(() => {
+    if (openMenuUid === null) return;
+    function handleOutside() { setOpenMenuUid(null); }
+    document.addEventListener('click', handleOutside);
+    return () => document.removeEventListener('click', handleOutside);
+  }, [openMenuUid]);
 
   async function fetchUsers(device: Device) {
     setLoading(true); setError(''); setUsers([]);
@@ -371,12 +379,37 @@ export default function UsersPage() {
                     <td><span className="mono">{user.card || '—'}</span></td>
                     {!selectionMode && (
                       <td>
-                        <div className="actions">
-                          <button className="btn-icon" onClick={() => openEdit(user)} title="Edit">✎</button>
-                          <button className="btn-icon fp" onClick={() => openFinger(user)} title="Enroll Fingerprint">⌖</button>
-                          <button className="btn-icon transfer" onClick={() => openTransfer(user)} title="Copy to Another Device">⇄</button>
-                          <button className="btn-icon assign" onClick={() => openAssign(user)} title="Manage Device Assignments">⊡</button>
-                          <button className="btn-icon danger" onClick={() => openDelete(user)} title="Delete">✕</button>
+                        <div className="actions" style={{position:'relative'}}>
+                          <button className="btn-edit" onClick={() => openEdit(user)}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            Edit
+                          </button>
+                          <button
+                            className="btn-more"
+                            aria-label="More actions"
+                            onClick={e => { e.stopPropagation(); setOpenMenuUid(openMenuUid === user.uid ? null : user.uid); }}
+                          >···</button>
+                          {openMenuUid === user.uid && (
+                            <div className="action-menu" onClick={e => e.stopPropagation()}>
+                              <button className="menu-item" onClick={() => { setOpenMenuUid(null); openFinger(user); }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"/></svg>
+                                Enroll fingerprint
+                              </button>
+                              <button className="menu-item" onClick={() => { setOpenMenuUid(null); openTransfer(user); }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="8" height="8" rx="1"/><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2"/><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2"/></svg>
+                                Copy to device
+                              </button>
+                              <button className="menu-item" onClick={() => { setOpenMenuUid(null); openAssign(user); }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+                                Manage devices
+                              </button>
+                              <div className="menu-divider"/>
+                              <button className="menu-item danger" onClick={() => { setOpenMenuUid(null); openDelete(user); }}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                                Delete user
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </td>
                     )}
@@ -628,13 +661,17 @@ export default function UsersPage() {
         .role-2 { background: rgba(6,182,212,0.1); color: #22d3ee; }
         .role-6 { background: rgba(234,179,8,0.1); color: #facc15; }
         .role-14 { background: rgba(168,85,247,0.1); color: #c084fc; }
-        .actions { display: flex; gap: 6px; }
-        .btn-icon { width: 30px; height: 30px; border-radius: 6px; border: 1px solid #27272a; background: #18181b; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; color: #52525b; transition: all 0.15s; }
-        .btn-icon:hover { background: #27272a; color: #a1a1aa; }
-        .btn-icon.fp:hover { background: rgba(6,182,212,0.1); border-color: rgba(6,182,212,0.3); color: #22d3ee; }
-        .btn-icon.transfer:hover { background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.3); color: #10b981; }
-        .btn-icon.assign:hover { background: rgba(234,179,8,0.1); border-color: rgba(234,179,8,0.3); color: #facc15; }
-        .btn-icon.danger:hover { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); color: #f87171; }
+        .actions { display: flex; gap: 6px; align-items: center; }
+        .btn-edit { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; background: rgba(24,130,245,0.12); border: 1px solid rgba(24,130,245,0.25); border-radius: 7px; font-size: 12px; font-weight: 500; color: #60a5fa; cursor: pointer; font-family: inherit; transition: all 0.15s; white-space: nowrap; }
+        .btn-edit:hover { background: rgba(24,130,245,0.22); border-color: rgba(24,130,245,0.4); color: #93c5fd; }
+        .btn-more { width: 30px; height: 30px; border-radius: 7px; border: 1px solid #27272a; background: #18181b; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; color: #52525b; transition: all 0.15s; letter-spacing: 1px; padding-bottom: 3px; line-height: 1; }
+        .btn-more:hover { background: #27272a; color: #a1a1aa; border-color: #3f3f46; }
+        .action-menu { position: absolute; right: 0; top: calc(100% + 6px); background: #1c1c21; border: 1px solid #2e2e34; border-radius: 10px; padding: 5px; min-width: 180px; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+        .menu-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: none; background: none; color: #a1a1aa; font-size: 13px; cursor: pointer; font-family: inherit; border-radius: 7px; text-align: left; transition: all 0.12s; }
+        .menu-item:hover { background: #27272a; color: #f4f4f5; }
+        .menu-item.danger { color: #f87171; }
+        .menu-item.danger:hover { background: rgba(239,68,68,0.12); color: #fca5a5; }
+        .menu-divider { height: 1px; background: #27272a; margin: 4px 0; }
         .empty { padding: 60px 20px; text-align: center; color: #52525b; font-size: 13px; }
         .empty-icon { font-size: 32px; margin-bottom: 12px; }
         .error-state { color: #f87171; }

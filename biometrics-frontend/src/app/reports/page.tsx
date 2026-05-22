@@ -9,6 +9,7 @@ interface DayRecord {
   date: string; employee_name: string; user_id: string; department: string; company: string;
   shift: string; shift_time_in: string; shift_time_out: string;
   first_in: string | null; last_out: string | null;
+  time_in_location: string | null; time_out_location: string | null;
   is_absent: boolean; is_late: boolean; late_minutes: number;
   is_undertime: boolean; undertime_minutes: number;
   is_overtime: boolean; overtime_minutes: number; hours_worked: number;
@@ -75,12 +76,18 @@ export default function ReportsPage() {
   }
 
   function exportCSV() {
-    const rows: string[][] = [['Employee', 'User ID', 'Department', 'Company', 'Shift', 'Date', 'Time In', 'Time Out', 'Hours', 'Absent', 'Late', 'Late Duration', 'Undertime', 'UT Duration', 'Overtime', 'OT Duration']];
+    const rows: string[][] = [[
+      'Employee', 'User ID', 'Department', 'Company', 'Shift', 'Date',
+      'Time In', 'Time In Location', 'Time Out', 'Time Out Location',
+      'Hours', 'Absent', 'Late', 'Late Duration', 'Undertime', 'UT Duration', 'Overtime', 'OT Duration'
+    ]];
     report.forEach(emp => {
       emp.records.forEach(r => {
         rows.push([
           emp.employee.name, emp.employee.user_id, r.department || '', r.company || '',
-          r.shift || '', r.date, r.first_in || '', r.last_out || '',
+          r.shift || '', r.date,
+          r.first_in || '', r.time_in_location || '',
+          r.last_out || '', r.time_out_location || '',
           String(r.hours_worked),
           r.is_absent ? 'Yes' : 'No',
           r.is_late ? 'Yes' : 'No', fmtMins(r.late_minutes),
@@ -171,7 +178,6 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {/* Per employee */}
       {generated && report.length === 0 && (
         <div className="card"><div className="empty"><div className="empty-icon">📋</div><div>No data found for this period</div></div></div>
       )}
@@ -202,16 +208,34 @@ export default function ReportsPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Date</th><th>Time In</th><th>Time Out</th><th>Hours</th>
-                    <th>Late</th><th>Undertime</th><th>Overtime</th><th>Status</th>
+                    <th>Date</th>
+                    <th>Time In</th>
+                    <th>In Location</th>
+                    <th>Time Out</th>
+                    <th>Out Location</th>
+                    <th>Hours</th>
+                    <th>Late</th>
+                    <th>Undertime</th>
+                    <th>Overtime</th>
+                    <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {emp.records.map(r => (
                     <tr key={r.date} className={r.is_absent ? 'row-absent' : ''}>
-                      <td>{new Date(r.date).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' })}</td>
+                      <td className="td-date">{new Date(r.date).toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' })}</td>
                       <td><span className="mono">{r.first_in || <span className="muted">—</span>}</span></td>
+                      <td>
+                        {r.time_in_location
+                          ? <span className="loc-badge in">{r.time_in_location}</span>
+                          : <span className="muted">—</span>}
+                      </td>
                       <td><span className="mono">{r.last_out || <span className="muted">—</span>}</span></td>
+                      <td>
+                        {r.time_out_location
+                          ? <span className="loc-badge out">{r.time_out_location}</span>
+                          : <span className="muted">—</span>}
+                      </td>
                       <td>{r.hours_worked > 0 ? `${r.hours_worked}h` : <span className="muted">—</span>}</td>
                       <td>{r.is_late ? <span className="flag-late">{fmtMins(r.late_minutes)}</span> : <span className="muted">—</span>}</td>
                       <td>{r.is_undertime ? <span className="flag-ut">{fmtMins(r.undertime_minutes)}</span> : <span className="muted">—</span>}</td>
@@ -279,14 +303,23 @@ export default function ReportsPage() {
         .stat.overtime .stat-val{color:#16a34a}
         .expand-btn{background:none;border:none;font-size:12px;color:#aaa;cursor:pointer;padding:4px 8px}
 
-        .emp-detail{border-top:1px solid #f0f0ee}
-        .table{width:100%;border-collapse:collapse;font-size:13px}
-        .table th{text-align:left;padding:10px 20px;color:#aaa;font-weight:400;font-size:11px;text-transform:uppercase;letter-spacing:.5px;background:#fafaf9;border-bottom:1px solid #f0f0ee}
-        .table td{padding:12px 20px;color:#333;border-bottom:1px solid #f7f7f5}
+        .emp-detail{border-top:1px solid #f0f0ee;overflow-x:auto}
+        .table{width:100%;border-collapse:collapse;font-size:13px;min-width:860px}
+        .table th{text-align:left;padding:10px 14px;color:#aaa;font-weight:400;font-size:11px;text-transform:uppercase;letter-spacing:.5px;background:#fafaf9;border-bottom:1px solid #f0f0ee;white-space:nowrap}
+        .table td{padding:11px 14px;color:#333;border-bottom:1px solid #f7f7f5;vertical-align:middle}
         .table tr:last-child td{border-bottom:none}
         .row-absent td{background:#fef9f9}
-        .mono{font-family:monospace;font-size:12px}
+        .td-date{white-space:nowrap;color:#555}
+        .mono{font-family:monospace;font-size:12px;white-space:nowrap}
         .muted{color:#ccc}
+
+        .loc-badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 8px;border-radius:999px;font-weight:500;white-space:nowrap}
+        .loc-badge::before{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;flex-shrink:0}
+        .loc-badge.in{background:#f0fdf4;color:#15803d}
+        .loc-badge.in::before{background:#22c55e}
+        .loc-badge.out{background:#eff6ff;color:#1d4ed8}
+        .loc-badge.out::before{background:#60a5fa}
+
         .flag-late{color:#ca8a04;font-size:12px;font-weight:500}
         .flag-ut{color:#ea580c;font-size:12px;font-weight:500}
         .flag-ot{color:#16a34a;font-size:12px;font-weight:500}

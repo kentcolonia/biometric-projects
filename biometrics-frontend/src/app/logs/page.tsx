@@ -7,6 +7,7 @@ interface Log {
   id: number;
   uid: number;
   user_id: string;
+  user_name: string | null;
   timestamp: string;
   status: number;
   punch: number;
@@ -114,10 +115,11 @@ export default function LogsPage() {
   }
 
   function exportCSV() {
-    const headers = ['Log ID', 'User ID', 'Location', 'Device IP', 'Date', 'Time', 'Type', 'Status'];
+    const headers = ['Log ID', 'User ID', 'Name', 'Location', 'Device IP', 'Date', 'Time', 'Type', 'Status'];
     const rows = logs.map(log => [
       log.id,
       log.user_id,
+      log.user_name || '',
       log.location || '',
       log.device_ip || '',
       formatDate(log.timestamp),
@@ -214,6 +216,7 @@ export default function LogsPage() {
                 <tr>
                   <th>Log ID</th>
                   <th>User ID</th>
+                  <th>Name</th>
                   <th>Location</th>
                   <th>Date</th>
                   <th>Time</th>
@@ -228,6 +231,7 @@ export default function LogsPage() {
                     <tr key={log.id}>
                       <td><span className="mono">#{log.id}</span></td>
                       <td><span className="mono">{log.user_id}</span></td>
+                      <td>{log.user_name ? <span className="user-name">{log.user_name}</span> : <span className="muted">—</span>}</td>
                       <td>
                         <div className="location-cell">
                           <span className="location-dot" />
@@ -301,6 +305,8 @@ export default function LogsPage() {
         .table tr:last-child td { border-bottom: none; }
         .table tr:hover td { background: #fafaf9; }
         .mono { font-family: monospace; font-size: 12px; color: #666; }
+        .user-name { font-size: 13px; font-weight: 500; color: #111; }
+        .user-name { font-size: 13px; font-weight: 500; color: #e4e4e7; }
         .time { font-family: monospace; font-size: 12px; color: #333; font-weight: 500; }
         .muted { color: #ccc; }
 

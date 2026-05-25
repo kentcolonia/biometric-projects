@@ -123,10 +123,31 @@ def create_shift():
     except ValueError:
         return jsonify({'error': 'Invalid time format, use HH:MM'}), 400
 
+    break_start = None
+    break_end = None
+    has_break = bool(data.get('has_break', False))
+    if has_break:
+        try:
+            break_start = datetime.strptime(data['break_start'], '%H:%M').time() if data.get('break_start') else None
+            break_end   = datetime.strptime(data['break_end'],   '%H:%M').time() if data.get('break_end')   else None
+        except ValueError:
+            return jsonify({'error': 'Invalid break time format, use HH:MM'}), 400
+
+    saturday_time_out = None
+    if data.get('saturday_time_out'):
+        try:
+            saturday_time_out = datetime.strptime(data['saturday_time_out'], '%H:%M').time()
+        except ValueError:
+            return jsonify({'error': 'Invalid saturday_time_out format, use HH:MM'}), 400
+
     shift = ShiftSchedule(
         name=data['name'],
         time_in=time_in,
         time_out=time_out,
+        break_start=break_start,
+        break_end=break_end,
+        has_break=has_break,
+        saturday_time_out=saturday_time_out,
         grace_period=int(data.get('grace_period', 15)),
         is_night_shift=bool(data.get('is_night_shift', False)),
         company_id=data.get('company_id'),
@@ -146,10 +167,17 @@ def update_shift(id):
     if 'grace_period' in data: shift.grace_period = int(data['grace_period'])
     if 'is_night_shift' in data: shift.is_night_shift = bool(data['is_night_shift'])
     if 'company_id' in data: shift.company_id = data['company_id']
+    if 'has_break' in data: shift.has_break = bool(data['has_break'])
     if 'time_in' in data:
         shift.time_in = datetime.strptime(data['time_in'], '%H:%M').time()
     if 'time_out' in data:
         shift.time_out = datetime.strptime(data['time_out'], '%H:%M').time()
+    if 'break_start' in data:
+        shift.break_start = datetime.strptime(data['break_start'], '%H:%M').time() if data['break_start'] else None
+    if 'break_end' in data:
+        shift.break_end = datetime.strptime(data['break_end'], '%H:%M').time() if data['break_end'] else None
+    if 'saturday_time_out' in data:
+        shift.saturday_time_out = datetime.strptime(data['saturday_time_out'], '%H:%M').time() if data['saturday_time_out'] else None
     db.session.commit()
     return jsonify({'message': 'Shift updated', 'data': shift.to_dict()}), 200
 
@@ -248,13 +276,21 @@ def compute_attendance(logs_for_day, shift, work_date):
     check_ins  = [l for l in logs_for_day if l.punch == 0]
     check_outs = [l for l in logs_for_day if l.punch == 1]
 
-    first_in  = min((l.timestamp for l in check_ins),  default=None)
-    last_out  = max((l.timestamp for l in check_outs), default=None)
+    # Find the earliest check-in and latest check-out logs (full objects for location)
+    first_in_log  = min(check_ins,  key=lambda l: l.timestamp, default=None)
+    last_out_log  = max(check_outs, key=lambda l: l.timestamp, default=None)
+
+    first_in  = first_in_log.timestamp  if first_in_log  else None
+    last_out  = last_out_log.timestamp  if last_out_log  else None
+
+    def loc(log): return log.device.location if log and log.device and log.device.location else None
 
     result = {
         'date': work_date.isoformat(),
         'first_in': first_in.strftime('%H:%M:%S') if first_in else None,
         'last_out': last_out.strftime('%H:%M:%S') if last_out else None,
+        'time_in_location':  loc(first_in_log),
+        'time_out_location': loc(last_out_log),
         'is_absent': first_in is None,
         'is_late': False,
         'late_minutes': 0,
@@ -268,11 +304,22 @@ def compute_attendance(logs_for_day, shift, work_date):
     if not shift:
         return result
 
+    # Saturday half-day: use saturday_time_out if set, skip if None (no work)
+    is_saturday = work_date.weekday() == 5
+    if is_saturday:
+        if shift.saturday_time_out is None:
+            # No Saturday work defined — mark as absent if no logs
+            result['is_absent'] = first_in is None
+            return result
+        effective_time_out = shift.saturday_time_out
+    else:
+        effective_time_out = shift.time_out
+
     shift_in  = datetime.combine(work_date, shift.time_in)
-    shift_out = datetime.combine(work_date, shift.time_out)
+    shift_out = datetime.combine(work_date, effective_time_out)
 
     # Night shift: shift_out is next day
-    if shift.is_night_shift and shift.time_out < shift.time_in:
+    if shift.is_night_shift and effective_time_out < shift.time_in:
         shift_out += timedelta(days=1)
 
     grace_cutoff = shift_in + timedelta(minutes=shift.grace_period)
@@ -340,7 +387,8 @@ def attendance_report():
     dt_from = datetime.combine(date_from, time(0, 0, 0))
     dt_to   = datetime.combine(date_to,   time(23, 59, 59))
 
-    all_logs = AttendanceLog.query.filter(
+    from sqlalchemy.orm import joinedload as _jl
+    all_logs = AttendanceLog.query.options(_jl(AttendanceLog.device)).filter(
         AttendanceLog.user_id.in_(user_ids),
         AttendanceLog.timestamp >= dt_from,
         AttendanceLog.timestamp <= dt_to,

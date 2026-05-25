@@ -13,6 +13,7 @@ from devices.routes import devices_bp
 from logs.routes import logs_bp
 from users.routes import users_bp
 from hr.routes import hr_bp
+from assignments.routes import assignments_bp
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -29,6 +30,7 @@ app.register_blueprint(devices_bp)
 app.register_blueprint(logs_bp)
 app.register_blueprint(users_bp)
 app.register_blueprint(hr_bp)
+app.register_blueprint(assignments_bp)
 
 
 @app.route('/login', methods=['POST'])
@@ -72,12 +74,14 @@ def is_device_online(ip, port=4370):
 
 def sync_historical_logs(conn, device_id, ip):
     """Pull all existing logs from device and save any that aren't in DB yet."""
+    import traceback
     try:
         print(f"[{ip}] Syncing historical logs from device...", flush=True)
         attendances = conn.get_attendance()
         if not attendances:
             print(f"[{ip}] No historical logs found on device.", flush=True)
             return
+        print(f"[{ip}] Fetched {len(attendances)} records from device, saving new ones...", flush=True)
         new_count = 0
         with app.app_context():
             for att in attendances:
@@ -98,9 +102,10 @@ def sync_historical_logs(conn, device_id, ip):
                     db.session.add(log)
                     new_count += 1
             db.session.commit()
-        print(f"[{ip}] Synced {new_count} new historical logs.", flush=True)
+        print(f"[{ip}] Synced {new_count} new historical logs (skipped {len(attendances) - new_count} duplicates).", flush=True)
     except Exception as e:
         print(f"[{ip}] Failed to sync historical logs: {e}", flush=True)
+        traceback.print_exc()
 
 
 def save_attendance(attendance, device_id, ip):
@@ -131,7 +136,7 @@ class LiveCaptureThread(threading.Thread):
         self.ip = ip
         self.device_id = device_id
         self.port = port
-        self.zk = ZK(ip, port=port, timeout=5, password=0, force_udp=False, ommit_ping=True)
+        self.zk = ZK(ip, port=port, timeout=15, password=0, force_udp=False, ommit_ping=True)
         self.conn = None
         self.running = False
         self.use_polling = False  # fallback mode for devices that don't support live capture

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchWithAuth } from '@/lib/api';
 
 interface Device { id: number; ip: string; port: number; location: string; isActive: boolean; }
@@ -9,7 +9,7 @@ interface Assignment { id: number; user_id: string; device_id: number; device_ip
 
 const PRIVILEGE_LABELS: Record<number, string> = { 0: 'User', 2: 'Enroller', 6: 'Manager', 14: 'Admin' };
 const FINGER_LABELS = ['Left Pinky','Left Ring','Left Middle','Left Index','Left Thumb','Right Thumb','Right Index','Right Middle','Right Ring','Right Pinky'];
-type ModalMode = 'edit' | 'enroll' | 'finger' | 'delete' | 'transfer' | 'assign' | 'bulk' | null;
+type ModalMode = 'edit' | 'enroll' | 'finger' | 'delete' | 'transfer' | 'assign' | 'syncfp' | 'bulk' | null;
 const emptyForm = { user_id: '', name: '', privilege: 0, password: '', card: '' };
 
 export default function UsersPage() {
@@ -33,6 +33,8 @@ export default function UsersPage() {
   const [loadingAssignments, setLoadingAssignments] = useState(false);
   const [assignDeviceId, setAssignDeviceId] = useState<number | ''>('');
   const [openMenuUid, setOpenMenuUid] = useState<number | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuPos, setMenuPos] = useState<{top: number; right: number} | null>(null);
 
   // Bulk selection state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -59,9 +61,14 @@ export default function UsersPage() {
 
   useEffect(() => {
     if (openMenuUid === null) return;
-    function handleOutside() { setOpenMenuUid(null); }
-    document.addEventListener('click', handleOutside);
-    return () => document.removeEventListener('click', handleOutside);
+    function handleOutside(e: MouseEvent) {
+      if (menuRef.current && menuRef.current.contains(e.target as Node)) return;
+      setOpenMenuUid(null);
+      setMenuPos(null);
+    }
+    // Use mousedown so it fires before onClick, preventing menu items from being swallowed
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
   }, [openMenuUid]);
 
   async function fetchUsers(device: Device) {
@@ -87,6 +94,7 @@ export default function UsersPage() {
   function openFinger(user: ZKUser) { setSelectedUser(user); setFingerIndex(0); setModalError(''); setModalSuccess(''); setModalMode('finger'); }
   function openDelete(user: ZKUser) { setSelectedUser(user); setModalError(''); setModalSuccess(''); setModalMode('delete'); }
   function openTransfer(user: ZKUser) { setSelectedUser(user); setTargetDeviceId(''); setModalError(''); setModalSuccess(''); setModalMode('transfer'); }
+  function openSyncFp(user: ZKUser) { setSelectedUser(user); setModalError(''); setModalSuccess(''); setModalMode('syncfp'); }
   function openAssign(user: ZKUser) { setSelectedUser(user); setAssignDeviceId(''); setModalError(''); setModalSuccess(''); fetchAssignments(user.user_id); setModalMode('assign'); }
 
   function closeModal() { setModalMode(null); setSelectedUser(null); setModalError(''); setModalSuccess(''); setTargetDeviceId(''); setAssignDeviceId(''); setAssignments([]); setBulkProgress(null); setBulkTargetDeviceId(''); }
@@ -231,6 +239,19 @@ export default function UsersPage() {
       const result = await fetchWithAuth<any>('/assignments/transfer', { method: 'POST', body: JSON.stringify({ user_id: selectedUser.user_id, source_device_id: selectedDevice.id, target_device_id: targetDeviceId }) });
       setModalSuccess(`${result.message}. ${result.fingers_copied} fingerprint(s) copied.`);
     } catch (err: any) { setModalError(err.message || 'Transfer failed'); }
+    finally { setSaving(false); }
+  }
+
+  async function handleSyncFp() {
+    if (!selectedUser) return;
+    setSaving(true); setModalError(''); setModalSuccess('');
+    try {
+      const result = await fetchWithAuth<any>('/assignments/sync-fingerprints', {
+        method: 'POST',
+        body: JSON.stringify({ user_id: selectedUser.user_id }),
+      });
+      setModalSuccess(`✓ ${result.message}${result.errors?.length ? ` (${result.errors.length} error(s))` : ''}`);
+    } catch (e: any) { setModalError(e.message || 'Sync failed'); }
     finally { setSaving(false); }
   }
 
@@ -387,29 +408,17 @@ export default function UsersPage() {
                           <button
                             className="btn-more"
                             aria-label="More actions"
-                            onClick={e => { e.stopPropagation(); setOpenMenuUid(openMenuUid === user.uid ? null : user.uid); }}
+                            onClick={e => {
+                              e.stopPropagation();
+                              if (openMenuUid === user.uid) { setOpenMenuUid(null); setMenuPos(null); }
+                              else {
+                                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                setMenuPos({ top: rect.bottom + 6, right: window.innerWidth - rect.right });
+                                setOpenMenuUid(user.uid);
+                              }
+                            }}
                           >···</button>
-                          {openMenuUid === user.uid && (
-                            <div className="action-menu" onClick={e => e.stopPropagation()}>
-                              <button className="menu-item" onClick={() => { setOpenMenuUid(null); openFinger(user); }}>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"/></svg>
-                                Enroll fingerprint
-                              </button>
-                              <button className="menu-item" onClick={() => { setOpenMenuUid(null); openTransfer(user); }}>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="8" height="8" rx="1"/><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2"/><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2"/></svg>
-                                Copy to device
-                              </button>
-                              <button className="menu-item" onClick={() => { setOpenMenuUid(null); openAssign(user); }}>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
-                                Manage devices
-                              </button>
-                              <div className="menu-divider"/>
-                              <button className="menu-item danger" onClick={() => { setOpenMenuUid(null); openDelete(user); }}>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                                Delete user
-                              </button>
-                            </div>
-                          )}
+
                         </div>
                       </td>
                     )}
@@ -421,7 +430,73 @@ export default function UsersPage() {
         )}
       </div>
 
+      {/* Fixed dropdown portal — renders outside overflow:hidden card */}
+      {openMenuUid !== null && menuPos && (() => {
+        const user = filtered.find(u => u.uid === openMenuUid);
+        if (!user) return null;
+        return (
+          <div ref={menuRef} className="action-menu-fixed" style={{top: menuPos.top, right: menuPos.right}} onClick={e => e.stopPropagation()}>
+            <button className="menu-item" onClick={() => { setOpenMenuUid(null); setMenuPos(null); openFinger(user); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/><path d="M14 13.12c0 2.38 0 6.38-1 8.88"/><path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/><path d="M2 12a10 10 0 0 1 18-6"/><path d="M2 16h.01"/><path d="M21.8 16c.2-2 .131-5.354 0-6"/><path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2"/><path d="M8.65 22c.21-.66.45-1.32.57-2"/><path d="M9 6.8a6 6 0 0 1 9 5.2v2"/></svg>
+              Enroll fingerprint
+            </button>
+            <button className="menu-item" onClick={() => { setOpenMenuUid(null); setMenuPos(null); openTransfer(user); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="8" width="8" height="8" rx="1"/><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2"/><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2"/></svg>
+              Copy to device
+            </button>
+            <button className="menu-item" onClick={() => { setOpenMenuUid(null); setMenuPos(null); openAssign(user); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+              Manage devices
+            </button>
+            <button className="menu-item sync" onClick={() => { setOpenMenuUid(null); setMenuPos(null); openSyncFp(user); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+              Sync fingerprints
+            </button>
+            <div className="menu-divider"/>
+            <button className="menu-item danger" onClick={() => { setOpenMenuUid(null); setMenuPos(null); openDelete(user); }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+              Delete user
+            </button>
+          </div>
+        );
+      })()}
+
       {/* ── BULK MODAL ── */}
+      {modalMode === 'syncfp' && selectedUser && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth: 420}}>
+            <div className="modal-header">
+              <h2 className="modal-title">Sync Fingerprints</h2>
+              <button className="modal-close" onClick={closeModal}>✕</button>
+            </div>
+            <div className="syncfp-body">
+              <div className="syncfp-icon">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{color:'#22d3ee'}}><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+              </div>
+              <div className="syncfp-name">{selectedUser.name}</div>
+              <div className="syncfp-desc">
+                This will scan <strong>all assigned devices</strong> for this user's fingerprint templates,
+                merge them by finger slot, and push the complete set back to every device.
+                <br/><br/>
+                Use this after enrolling a new finger on any device to keep all devices in sync.
+              </div>
+              {modalError && <div className="error-box">{modalError}</div>}
+              {modalSuccess && <div className="success-box">{modalSuccess}</div>}
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" onClick={closeModal}>Cancel</button>
+              <button className="btn-sync" onClick={handleSyncFp} disabled={saving}>
+                {saving ? (
+                  <><span className="spinner"/> Syncing...</>
+                ) : (
+                  <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg> Sync Now</>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modalMode === 'bulk' && (
         <div className="modal-overlay" onClick={!saving ? closeModal : undefined}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -666,10 +741,23 @@ export default function UsersPage() {
         .btn-edit:hover { background: rgba(24,130,245,0.22); border-color: rgba(24,130,245,0.4); color: #93c5fd; }
         .btn-more { width: 30px; height: 30px; border-radius: 7px; border: 1px solid #27272a; background: #18181b; cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; color: #52525b; transition: all 0.15s; letter-spacing: 1px; padding-bottom: 3px; line-height: 1; }
         .btn-more:hover { background: #27272a; color: #a1a1aa; border-color: #3f3f46; }
-        .action-menu { position: absolute; right: 0; top: calc(100% + 6px); background: #1c1c21; border: 1px solid #2e2e34; border-radius: 10px; padding: 5px; min-width: 180px; z-index: 100; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+        .action-menu-fixed { position: fixed; background: #1c1c21; border: 1px solid #2e2e34; border-radius: 10px; padding: 5px; min-width: 180px; z-index: 9999; box-shadow: 0 8px 24px rgba(0,0,0,0.6); }
         .menu-item { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: none; background: none; color: #a1a1aa; font-size: 13px; cursor: pointer; font-family: inherit; border-radius: 7px; text-align: left; transition: all 0.12s; }
         .menu-item:hover { background: #27272a; color: #f4f4f5; }
         .menu-item.danger { color: #f87171; }
+        .menu-item.sync { color: #22d3ee; }
+        .menu-item.sync:hover { background: rgba(6,182,212,0.1); color: #67e8f9; }
+        .syncfp-body { padding: 8px 0 16px; text-align: center; }
+        .syncfp-icon { width: 60px; height: 60px; border-radius: 50%; background: rgba(6,182,212,0.1); border: 1px solid rgba(6,182,212,0.2); display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; }
+        .syncfp-name { font-size: 16px; font-weight: 600; color: #f4f4f5; margin-bottom: 10px; }
+        .syncfp-desc { font-size: 13px; color: #71717a; line-height: 1.6; text-align: left; background: #141418; border: 1px solid #27272a; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; }
+        .syncfp-desc strong { color: #a1a1aa; }
+        .success-box { background: rgba(16,185,129,0.1); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.2); border-radius: 8px; padding: 10px 14px; font-size: 13px; margin-top: 8px; }
+        .btn-sync { display: inline-flex; align-items: center; gap: 6px; padding: 9px 18px; background: rgba(6,182,212,0.15); color: #22d3ee; border: 1px solid rgba(6,182,212,0.3); border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; font-family: inherit; transition: all 0.15s; }
+        .btn-sync:hover { background: rgba(6,182,212,0.25); border-color: rgba(6,182,212,0.5); }
+        .btn-sync:disabled { opacity: 0.5; cursor: not-allowed; }
+        .spinner { width: 13px; height: 13px; border: 2px solid rgba(34,211,238,0.3); border-top-color: #22d3ee; border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; }
+        @keyframes spin { to { transform: rotate(360deg); } }
         .menu-item.danger:hover { background: rgba(239,68,68,0.12); color: #fca5a5; }
         .menu-divider { height: 1px; background: #27272a; margin: 4px 0; }
         .empty { padding: 60px 20px; text-align: center; color: #52525b; font-size: 13px; }

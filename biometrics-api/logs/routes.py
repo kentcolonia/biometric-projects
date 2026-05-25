@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 from auth import token_required
-from models.models import db, AttendanceLog, Device
+from models.models import db, AttendanceLog, Device, Employee
 from sqlalchemy.orm import joinedload
 from datetime import datetime
 
@@ -49,6 +49,13 @@ def get_all_logs():
     logs = query.order_by(AttendanceLog.timestamp.desc()) \
                 .offset((page - 1) * limit).limit(limit).all()
 
+    # Build user_id -> employee name map for this page
+    page_user_ids = list({str(l.user_id) for l in logs})
+    emp_map = {}
+    if page_user_ids:
+        emps = Employee.query.filter(Employee.user_id.in_(page_user_ids)).all()
+        emp_map = {e.user_id: e.name for e in emps}
+
     return jsonify({
         "page": page,
         "limit": limit,
@@ -58,6 +65,7 @@ def get_all_logs():
             **log.to_dict(),
             "location": log.device.location if log.device else None,
             "device_ip": log.device.ip if log.device else None,
+            "user_name": emp_map.get(str(log.user_id)),
         } for log in logs]
     }), 200
 

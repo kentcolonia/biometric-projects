@@ -70,9 +70,13 @@ class Department(db.Model):
 class ShiftSchedule(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
-    time_in = db.Column(db.Time, nullable=False)       # expected check-in
-    time_out = db.Column(db.Time, nullable=False)      # expected check-out
-    grace_period = db.Column(db.Integer, default=15)   # minutes
+    time_in = db.Column(db.Time, nullable=False)           # expected check-in
+    time_out = db.Column(db.Time, nullable=False)          # expected check-out (Mon–Fri)
+    break_start = db.Column(db.Time, nullable=True)        # optional mid-day break start
+    break_end = db.Column(db.Time, nullable=True)          # optional mid-day break end
+    has_break = db.Column(db.Boolean, default=False)
+    saturday_time_out = db.Column(db.Time, nullable=True)  # half-day Saturday end; None = no Saturday
+    grace_period = db.Column(db.Integer, default=15)       # minutes
     is_night_shift = db.Column(db.Boolean, default=False)
     company_id = db.Column(db.Integer, db.ForeignKey('company.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -84,6 +88,10 @@ class ShiftSchedule(db.Model):
             'name': self.name,
             'time_in': self.time_in.strftime('%H:%M'),
             'time_out': self.time_out.strftime('%H:%M'),
+            'break_start': self.break_start.strftime('%H:%M') if self.break_start else None,
+            'break_end': self.break_end.strftime('%H:%M') if self.break_end else None,
+            'has_break': bool(self.has_break),
+            'saturday_time_out': self.saturday_time_out.strftime('%H:%M') if self.saturday_time_out else None,
             'grace_period': self.grace_period,
             'is_night_shift': self.is_night_shift,
             'company_id': self.company_id,

@@ -15,7 +15,7 @@ def get_all_users():
         return jsonify({'status': 'error', 'message': 'IP address is required'}), 400
 
     try:
-        zk = ZK(ip, port=port, timeout=5, password=0, force_udp=False, ommit_ping=True)
+        zk = ZK(ip, port=port, timeout=15, password=0, force_udp=False, ommit_ping=True)
         conn = zk.connect()
         conn.disable_device()
 
@@ -65,7 +65,7 @@ def update_user(uid):
         new_privilege = int(data["privilege"])
         new_card = int(data.get("card", 0))
 
-        zk = ZK(ip, port=port, timeout=5, password=0, force_udp=False, ommit_ping=True)
+        zk = ZK(ip, port=port, timeout=15, password=0, force_udp=False, ommit_ping=True)
         conn = zk.connect()
         conn.disable_device()
 
@@ -126,7 +126,7 @@ def delete_user(uid):
         if not ip:
             return jsonify({'error': 'IP address is required'}), 400
 
-        zk = ZK(ip, port=port, timeout=5, password=0, force_udp=False, ommit_ping=True)
+        zk = ZK(ip, port=port, timeout=15, password=0, force_udp=False, ommit_ping=True)
         conn = zk.connect()
         conn.disable_device()
 
@@ -169,7 +169,7 @@ def enroll_user():
         password = data.get("password", "")
         card = int(data.get("card", 0))
 
-        zk = ZK(ip, port=port, timeout=10, password=0, force_udp=False, ommit_ping=True)
+        zk = ZK(ip, port=port, timeout=15, password=0, force_udp=False, ommit_ping=True)
         conn = zk.connect()
         conn.disable_device()
 
@@ -218,7 +218,7 @@ def enroll_finger(uid):
         if not ip:
             return jsonify({'error': 'IP address is required'}), 400
 
-        zk = ZK(ip, port=port, timeout=10, password=0, force_udp=False, ommit_ping=True)
+        zk = ZK(ip, port=port, timeout=15, password=0, force_udp=False, ommit_ping=True)
         conn = zk.connect()
         conn.disable_device()
 

@@ -55,7 +55,7 @@ def create_device():
     zk = ZK(
         data['ip'],
         port=data['port'],
-        timeout=10,
+        timeout=20,
         password=0,
         force_udp=False,
         ommit_ping=True
@@ -99,7 +99,7 @@ def get_all_devices():
         zk = ZK(
             device.ip,
             port=device.port,
-            timeout=10,
+            timeout=20,
             password=0,
             force_udp=False,
             ommit_ping=True
@@ -194,7 +194,7 @@ def get_device(device_id):
     zk = ZK(
         device.ip,
         port=device.port,
-        timeout=10,
+        timeout=20,
         password=0,
         force_udp=False,
         ommit_ping=True
@@ -294,7 +294,7 @@ def update_device(device_id):
     zk = ZK(
         device.ip,
         port=int(device.port),
-        timeout=10,
+        timeout=20,
         password=0,
         force_udp=False,
         ommit_ping=True
@@ -325,10 +325,37 @@ def update_device(device_id):
 @devices_bp.route('/devices/<int:device_id>', methods=['DELETE'])
 @token_required
 def delete_device(device_id):
-    device = Device.query.get(device_id)
-    if not device:
-        return jsonify({'error': 'Device not found'}), 404
+    try:
+        device = Device.query.get(device_id)
+        if not device:
+            return jsonify({'error': 'Device not found'}), 404
 
-    db.session.delete(device)
-    db.session.commit()
-    return jsonify({'message': 'Device deleted'})
+        # Stop the live capture thread for this device if running
+        try:
+            from app import capture_threads
+            for thread in capture_threads:
+                if thread.device_id == device_id:
+                    thread.stop()
+                    capture_threads.remove(thread)
+                    print(f"[{device.ip}] Capture thread stopped for deleted device.", flush=True)
+                    break
+        except Exception as te:
+            print(f"Warning: could not stop capture thread for device {device_id}: {te}", flush=True)
+
+        # Delete child rows that have a NOT NULL FK to device — must go before device delete
+        db.session.execute(
+            db.text("DELETE FROM user_device_assignment WHERE device_id = :did"),
+            {"did": device_id}
+        )
+        db.session.execute(
+            db.text("DELETE FROM attendance_log WHERE device_id = :did"),
+            {"did": device_id}
+        )
+
+        db.session.delete(device)
+        db.session.commit()
+        return jsonify({'message': 'Device deleted'}), 200
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error deleting device {device_id}: {e}", flush=True)
+        return jsonify({'error': f'Failed to delete device: {str(e)}'}), 500
